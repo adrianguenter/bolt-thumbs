@@ -9,9 +9,12 @@ class ThumbnailCreator implements ResizeInterface
     public $defaultSource;
     public $errorSource;
     public $allowUpscale = false;
-    public $exifOrientation = true;
     public $quality = 80;
     public $canvas  = array(255, 255, 255);
+    public $transformers = array(
+        'input'=>array(),
+        'output' => array()
+    );
 
     public $targetWidth;
     public $targetHeight;
@@ -144,6 +147,18 @@ class ThumbnailCreator implements ResizeInterface
             return $data;
         }
     }
+    
+    /**
+     * undocumented function
+     *
+     * @return void
+     * @author 
+     **/
+    public function registerTransformer(Transformer\TransformerInterface $transformer, $type = 'input')
+    {
+        $this->transformers[$type][$transformer->getName()] = $transformer;   
+    }
+    
 
     /**
      * Main resizing function.
@@ -155,111 +170,32 @@ class ThumbnailCreator implements ResizeInterface
      **/
     protected function doResize($src, $width, $height, $crop = false, $fit = false, $border = false)
     {
-        if (!list($w, $h) = getimagesize($src)) {
-            return false;
-        }
-
-        $type = strtolower(substr(strrchr($src, '.'), 1));
-        if ($type == 'jpeg') {
-            $type = 'jpg';
-        }
-
-        switch($type)
-        {
-            case 'bmp':
-                $img = imagecreatefromwbmp($src);
-                break;
-            case 'gif':
-                $img = imagecreatefromgif($src);
-                break;
-            case 'jpg':
-                $img = imagecreatefromjpeg($src);
-                // Handle exif orientation
-                if ($this->exifOrientation && function_exists('exif_read_data')) {
-                    $exif = exif_read_data($src);
-                } else {
-                    $exif = false;
-                }
-                $modes = array(2 => 'H-', 3 => '-T', 4 => 'V-', 5 => 'VL', 6 => '-L', 7 => 'HL', 8 => '-R');
-                $orientation = isset($exif['Orientation']) ? $exif['Orientation'] : 0;
-                if (isset($modes[$orientation])) {
-                    $mode = $modes[$orientation];
-                    $img = self::imageFlipRotate($img, $mode[0], $mode[1]);
-                    $w = imagesx($img);
-                    $h = imagesy($img);
-                }
-                break;
-            case 'png':
-                $img = imagecreatefrompng($src);
-                break;
-            default:
-                return false;
-        }
-
+        $image = new ImageResource($src);
+        
         if ($crop) {
-            $ratio = max($width / $w, $height / $h);
-            $x = 0;
-            $y = 0;
-
-            $xratio = $w / $width;
-            $yratio = $h / $height;
-
-            // calculate x or y coordinate and width or height of source
-            if ($xratio > $yratio) {
-                $x = round(($w - ($w / $xratio * $yratio)) / 2);
-                $w = round($w / $xratio * $yratio);
-
-            } elseif ($yratio > $xratio) {
-                $y = round(($h - ($h / $yratio * $xratio)) / 2);
-                $h = round($h / $yratio * $xratio);
-            }
-
-
+            $this->registerTransformer(new Transformer\Crop($width, $height));
         } elseif (!$border && !$fit) {
-            $ratio = min($width / $w, $height / $h);
-            $width = $w * $ratio;
-            $height = $h * $ratio;
+            $this->registerTransformer(new Transformer\Resize($width, $height));
+        
         }
+        
+        foreach($this->transformers['input'] as $transformer) {
+            $transformer->transform($image);
+        }
+        
 
-        $new = imagecreatetruecolor($width, $height);
-
+        $new = new ImageResource(imagecreatetruecolor($width, $height));
+        
         if ($border) {
-
-            if (count($this->canvas) == 3) {
-                $canvas = imagecolorallocate($new, $this->canvas[0], $this->canvas[1], $this->canvas[2]);
-                imagefill($new, 0, 0, $canvas);
-            }
-
-            $x = 0;
-            $y = 0;
-            $tmpheight = $h * ($width / $w);
-            if ($tmpheight > $height) {
-                $width = $w * ($height / $h);
-                $x = round(($this->targetWidth - $width) / 2);
-            } else {
-                $height = $tmpheight;
-                $y = round(($this->targetHeight - $height) / 2);
-            }
-
+            $this->registerTransformer(new Transformer\Border($width, $height), 'output');
+        }
+        
+        foreach($this->transformers['output'] as $transformer) {
+            $transformer->transformOutput($new, $image); 
         }
 
-        // Preserve transparency where available
 
-        if ($type == 'gif' or $type == 'png') {
-            imagecolortransparent($new, imagecolorallocatealpha($new, 0, 0, 0, 127));
-            imagealphablending($new, false);
-            imagesavealpha($new, true);
-        }
-
-        if (false === $crop && false === $border) {
-            imagecopyresampled($new, $img, 0, 0, 0, 0, $width, $height, $w, $h);
-        } elseif ($border) {
-            imagecopyresampled($new, $img, $x, $y, 0, 0, $width, $height, $w, $h);
-        } else {
-            imagecopyresampled($new, $img, 0, 0, $x, $y, $width, $height, $w, $h);
-        }
-
-        return $this->getOutput($new, $type);
+        return $this->getOutput($new->getResource(), $image->getType());
     }
 
     /**
@@ -298,59 +234,4 @@ class ThumbnailCreator implements ResizeInterface
         return false;
     }
 
-    /**
-     * Image flip and rotate
-     *
-     * Based on http://stackoverflow.com/a/10001884/1136593
-     * Thanks Jon Grant
-     *
-     * @param $img (image to flip and/or rotate)
-     * @param $mode ('V' = vertical, 'H' = horizontal, 'HV' = both)
-     * @param $angle ('L' = -90°, 'R' = +90°, 'T' = 180°)
-     *
-     */
-    public static function imageFlipRotate($img, $mode, $angle)
-    {
-        // Flip the image
-        if ($mode === 'V' || $mode === 'H' || $mode === 'HV') {
-            $width = imagesx($img);
-            $height = imagesy($img);
-
-            $srcX = 0;
-            $srcY = 0;
-            $srcWidth = $width;
-            $srcHeight = $height;
-
-            switch ($mode) {
-                case 'V': // Vertical
-                    $srcY = $height - 1;
-                    $srcHeight = -$height;
-                    break;
-                case 'H': // Horizontal
-                    $srcX = $width - 1;
-                    $srcWidth = -$width;
-                    break;
-                case 'HV': // Both
-                    $srcX = $width - 1;
-                    $srcY = $height - 1;
-                    $srcWidth = -$width;
-                    $srcHeight = -$height;
-                    break;
-            }
-
-            $imgdest = imagecreatetruecolor($width, $height);
-
-            if (imagecopyresampled($imgdest, $img, 0, 0, $srcX, $srcY, $width, $height, $srcWidth, $srcHeight)) {
-                $img = $imgdest;
-            }
-        }
-
-        // Rotate the image
-        if ($angle === 'L' || $angle === 'R' || $angle === 'T') {
-            $rotate = array('L' => 270, 'R' => 90, 'T' => 180);
-            $img = imagerotate($img, $rotate[$angle], 0);
-        }
-
-        return $img;
-    }
 }

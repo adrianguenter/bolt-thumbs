@@ -66,7 +66,7 @@ class ThumbnailResponder
         }
 
         if ($this->app['config']->get('general/thumbnails/exif_orientation') !== null) {
-            $this->resizer->exifOrientation = $this->app['config']->get('general/thumbnails/exif_orientation');
+            $this->resizer->registerTransformer(new Transformer\Exif());
         }
 
         if ($this->app['config']->get('general/thumbnails/allow_upscale')) {

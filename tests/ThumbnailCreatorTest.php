@@ -3,6 +3,7 @@ namespace Bolt\Thumbs\Tests;
 
 use Symfony\Component\HttpFoundation\File\File;
 use Bolt\Thumbs\ThumbnailCreator;
+use Bolt\Thumbs\Transformer\Exif;
 
 class ThumbnailCreatorTest extends \PHPUnit_Framework_TestCase
 {
@@ -217,6 +218,7 @@ class ThumbnailCreatorTest extends \PHPUnit_Framework_TestCase
             $path = __DIR__ . '/tmp/' . $name . '.jpg';
             // Create test image
             $creator = new ThumbnailCreator();
+            $creator->registerTransformer(new Exif());
             $creator->setSource(new File(__DIR__ . '/images/exif-orientation/' . $name . '.jpg'));
             $result = $creator->resize($resize);
             file_put_contents($path, $result);
