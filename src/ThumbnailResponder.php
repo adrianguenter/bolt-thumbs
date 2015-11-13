@@ -97,6 +97,8 @@ class ThumbnailResponder
             }
         }
 
+        $this->routePattern = '/(?P<width>\d+)x(?P<height>\d+)(?P<action>[a-z]?)/?(?P<file>.+)';
+
         $this->parseRequest();
 
         try {
@@ -116,12 +118,12 @@ class ThumbnailResponder
     {
         $path = urldecode($this->request->getPathInfo());
 
-        if (preg_match('#/thumbs/(?P<width>\d+)x(?P<height>\d+)(?P<action>[a-z]?)/?(?P<file>.+)#', $path, $parsedRequest)) {
+        if (preg_match('#'.$this->routePattern.'#', $path, $parsedRequest)) {
             $commands = $this->resizer->provides();
-            if (isset($parsedRequest['action']) && array_key_exists($parsedRequest['action'], $commands)) {
+            $this->action = 'crop';
+            if (isset($parsedRequest['action'])
+                && array_key_exists($parsedRequest['action'], $commands)) {
                 $this->action = $commands[$parsedRequest['action']];
-            } else {
-                $this->action = 'crop';
             }
 
             $this->width    = $parsedRequest['width'];
@@ -132,8 +134,8 @@ class ThumbnailResponder
         // Check for retina image request
         if (strpos($this->file, '@2x') !== false) {
             $this->file = str_replace('@2x', '', $this->file);
-            $this->width = $this->width * 2;
-            $this->height = $this->height * 2;
+            $this->width *= 2;
+            $this->height *= 2;
         }
     }
 
